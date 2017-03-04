@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Linq;
+using System.Text;
 using System.Reflection;
 using System.Threading.Tasks;
 using System.Web;
@@ -43,6 +44,10 @@ namespace Jackett.Indexers
                 downloadBase: "https://xthor.bz/download.php?torrent=",
                 configData: new ConfigurationDataXthor())
         {
+            Encoding = Encoding.UTF8;
+            Language = "fr-fr";
+            Type = "private";
+
             // Clean capabilities
             TorznabCaps.Categories.Clear();
 
@@ -95,6 +100,12 @@ namespace Jackett.Indexers
             AddCategoryMapping(96, TorznabCatType.BooksEbook);          // EBOOKS MAGAZINES
             AddCategoryMapping(99, TorznabCatType.BooksEbook);          // EBOOKS ANIME
             AddCategoryMapping(23, TorznabCatType.PCPhoneAndroid);      // ANDROID
+
+            AddCategoryMapping(36, TorznabCatType.XXX);                 // XxX / Films
+            AddCategoryMapping(105, TorznabCatType.XXX);                // XxX / Séries
+            AddCategoryMapping(114, TorznabCatType.XXX);                // XxX / Lesbiennes 
+            AddCategoryMapping(115, TorznabCatType.XXX);                // XxX / Gays
+            AddCategoryMapping(113, TorznabCatType.XXX);                // XxX / Hentai
         }
 
         /// <summary>
@@ -110,7 +121,7 @@ namespace Jackett.Indexers
             IsConfigured = false;
 
             // Retrieve config values set by Jackett's user
-            ConfigData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
 
             // Check & Validate Config
             ValidateConfig();
@@ -188,6 +199,10 @@ namespace Jackett.Indexers
                         MinimumSeedTime = 345600,
                         PublishDate = DateTimeUtil.UnixTimestampToDateTime(torrent.added),
                         Size = torrent.size,
+                        Grabs = torrent.times_completed,
+                        Files = torrent.numfiles,
+                        UploadVolumeFactor = 1,
+                        DownloadVolumeFactor = (torrent.freeleech == 1 ? 0 : 1),
                         Guid = new Uri(TorrentDescriptionUrl.Replace("{id}", torrent.id.ToString())),
                         Comments = new Uri(TorrentCommentUrl.Replace("{id}", torrent.id.ToString())),
                         Link = new Uri(torrent.download_link)
@@ -404,6 +419,7 @@ namespace Jackett.Indexers
             {
                 Type = RequestType.GET,
                 Url = request,
+                Encoding = Encoding,
                 Headers = EmulatedBrowserHeaders
             };
 

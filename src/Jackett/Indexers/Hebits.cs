@@ -40,6 +40,9 @@ namespace Jackett.Indexers
                 downloadBase: "https://hebits.net/",
                 configData: new ConfigurationDataBasicLogin())
         {
+            Encoding = Encoding.GetEncoding("windows-1255");
+            Language = "he-il";
+            Type = "private";
 
             AddCategoryMapping(19, TorznabCatType.MoviesSD);
             AddCategoryMapping(25, TorznabCatType.MoviesOther); // Israeli Content
@@ -55,7 +58,7 @@ namespace Jackett.Indexers
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
             var pairs = new Dictionary<string, string> {
                 { "username", configData.Username.Value },
                 { "password", configData.Password.Value }
@@ -95,11 +98,10 @@ namespace Jackett.Indexers
                 }
             }
 
-            var response = await RequestBytesWithCookies(searchUrl);
-            var results = Encoding.GetEncoding("windows-1255").GetString(response.Content);
+            var response = await RequestStringWithCookies(searchUrl);
             try
             {
-                CQ dom = results;
+                CQ dom = response.Content;
 
                 CQ qRows = dom[".browse > div > div"];
 
@@ -120,6 +122,8 @@ namespace Jackett.Indexers
                     else
                         release.Title = titleParts[0].Trim();
 
+                    var qDetailsLink = qRow.Find("a[title][href^=\"details.php\"]");
+                    release.Comments = new Uri(SiteLink + qDetailsLink.Attr("href"));
                     release.Link = new Uri(SiteLink + qRow.Find("a").Attr("href"));
                     release.Guid = release.Link;
 
@@ -136,13 +140,31 @@ namespace Jackett.Indexers
                     release.Seeders = ParseUtil.CoerceInt(qRow.Find(".bUping").Text().Trim());
                     release.Peers = release.Seeders + ParseUtil.CoerceInt(qRow.Find(".bDowning").Text().Trim());
 
+                    var files = qRow.Find("div.bFiles").Get(0).LastChild.ToString();
+                    release.Files = ParseUtil.CoerceInt(files);
+
+                    var grabs = qRow.Find("div.bFinish").Get(0).LastChild.ToString();
+                    release.Grabs = ParseUtil.CoerceInt(grabs);
+
+                    if (qRow.Find("img[src=\"/pic/free.jpg\"]").Length >= 1)
+                        release.DownloadVolumeFactor = 0;
+                    else
+                        release.DownloadVolumeFactor = 1;
+
+                    if (qRow.Find("img[src=\"/pic/triple.jpg\"]").Length >= 1)
+                        release.UploadVolumeFactor = 3;
+                    else if (qRow.Find("img[src=\"/pic/double.jpg\"]").Length >= 1)
+                        release.UploadVolumeFactor = 2;
+                    else
+                        release.UploadVolumeFactor = 1;
+
                     releases.Add(release);
                 }
             }
 
             catch (Exception ex)
             {
-                OnParseError(results, ex);
+                OnParseError(response.Content, ex);
             }
 
             return releases;

@@ -42,6 +42,9 @@ namespace Jackett.Indexers
                 p: ps,
                 configData: new ConfigurationDataBasicLogin())
         {
+            Encoding = Encoding.GetEncoding("Windows-1255");
+            Language = "he-il";
+            Type = "private";
             TorznabCaps.Categories.Clear();
 
             AddMultiCategoryMapping(TorznabCatType.Movies, 7, 9, 58, 59, 60, 61, 83);
@@ -89,7 +92,7 @@ namespace Jackett.Indexers
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
             var loginPage = await RequestStringWithCookies(LoginUrl, string.Empty);
 
             var pairs = new Dictionary<string, string> {
@@ -169,11 +172,10 @@ namespace Jackett.Indexers
                 searchUrl += "text=" + strEncoded + "&category=0&search=1";
             }
 
-            var data = await RequestBytesWithCookiesAndRetry(searchUrl);
-            var results = Encoding.GetEncoding("Windows-1255").GetString(data.Content);
+            var data = await RequestStringWithCookiesAndRetry(searchUrl);
             try
             {
-                CQ dom = results;
+                CQ dom = data.Content;
                 ReleaseInfo release;
 
                 int rowCount = 0;
@@ -241,12 +243,23 @@ namespace Jackett.Indexers
                     }
 
                     release.Category = MapTrackerCatToNewznab(category);
+
+                    var grabs = qRow.Find("td:nth-child(6)").Text();
+                    release.Grabs = ParseUtil.CoerceInt(grabs);
+
+                    if (qRow.Find("img[src=\"/images/FL.png\"]").Length >= 1)
+                        release.DownloadVolumeFactor = 0;
+                    else
+                        release.DownloadVolumeFactor = 1;
+
+                    release.UploadVolumeFactor = 1;
+
                     releases.Add(release);
                 }
             }
             catch (Exception ex)
             {
-                OnParseError(results, ex);
+                OnParseError(data.Content, ex);
             }
 
             return releases;

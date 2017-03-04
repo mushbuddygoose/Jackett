@@ -9,6 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using Jackett.Models.IndexerConfig;
 using System.Collections.Specialized;
@@ -17,7 +18,7 @@ namespace Jackett.Indexers
 {
     public class SpeedCD : BaseIndexer, IIndexer
     {
-        private string LoginUrl { get { return SiteLink + "takeElogin.php"; } }
+        private string LoginUrl { get { return SiteLink + "take_login.php"; } }
         private string SearchUrl { get { return SiteLink + "browse.php"; } }
 
         new ConfigurationDataBasicLogin configData
@@ -38,6 +39,12 @@ namespace Jackett.Indexers
                 configData: new ConfigurationDataBasicLogin(@"Speed.Cd have increased their security. If you are having problems please check the security tab in your Speed.Cd profile.
                                                             eg. Geo Locking, your seedbox may be in a different country to the one where you login via your web browser"))
         {
+            Encoding = Encoding.UTF8;
+            Language = "en-us";
+            Type = "private";
+
+            TorznabCaps.SupportsImdbSearch = true;
+
             AddCategoryMapping("1", TorznabCatType.MoviesOther);
             AddCategoryMapping("42", TorznabCatType.Movies);
             AddCategoryMapping("32", TorznabCatType.Movies);
@@ -70,7 +77,7 @@ namespace Jackett.Indexers
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
 
             await DoLogin();
 
@@ -96,19 +103,16 @@ namespace Jackett.Indexers
 
         public async Task<IEnumerable<ReleaseInfo>> PerformQuery(TorznabQuery query)
         {
-            var loggedInCheck = await RequestStringWithCookies(SearchUrl);
-            if (!loggedInCheck.Content.Contains("/logout.php"))
-            {
-                //Cookie appears to expire after a period of time or logging in to the site via browser
-                await DoLogin();
-            }
-
-
             var releases = new List<ReleaseInfo>();
 
             NameValueCollection qParams = new NameValueCollection();
 
-            if (!string.IsNullOrEmpty(query.GetQueryString()))
+            if (!string.IsNullOrWhiteSpace(query.ImdbID))
+            {
+                qParams.Add("search", query.ImdbID);
+                qParams.Add("d", "on");
+            }
+            else if (!string.IsNullOrEmpty(query.GetQueryString()))
             {
                 qParams.Add("search", query.GetQueryString());
             }
@@ -126,6 +130,12 @@ namespace Jackett.Indexers
             }
 
             var response = await RequestStringWithCookiesAndRetry(urlSearch);
+            if (!response.Content.Contains("/logout.php"))
+            {
+                //Cookie appears to expire after a period of time or logging in to the site via browser
+                await DoLogin();
+                response = await RequestStringWithCookiesAndRetry(urlSearch);
+            }
 
             try
             {
@@ -159,13 +169,19 @@ namespace Jackett.Indexers
                     release.Link = link;
                     release.PublishDate = publishDate;
                     release.Size = size;
-                    release.Description = release.Title;
                     release.Seeders = seeders;
                     release.Peers = seeders + leechers;
                     release.MinimumRatio = 1;
                     release.MinimumSeedTime = 172800;
                     release.Category = MapTrackerCatToNewznab(category.ToString());
                     release.Comments = guid;
+
+                    if (torrentData.Find("span:contains(\"[Freeleech]\")").Any())
+                        release.DownloadVolumeFactor = 0;
+                    else
+                        release.DownloadVolumeFactor = 1;
+
+                    release.UploadVolumeFactor = 1;
 
                     releases.Add(release);
                 }

@@ -8,6 +8,7 @@ using NLog;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using Jackett.Models.IndexerConfig;
 using System.Collections.Specialized;
@@ -31,7 +32,7 @@ namespace Jackett.Indexers
         public HouseOfTorrents(IIndexerManagerService i, Logger l, IWebClient w, IProtectionService ps)
             : base(name: "House-of-Torrents",
                 description: "A general tracker",
-                link: "https://houseoftorrents.me/",
+                link: "https://houseoftorrents.club/",
                 caps: new TorznabCapabilities(),
                 manager: i,
                 client: w,
@@ -39,6 +40,10 @@ namespace Jackett.Indexers
                 p: ps,
                 configData: new ConfigurationDataBasicLoginWithRSSAndDisplay())
         {
+            Encoding = Encoding.GetEncoding("UTF-8");
+            Language = "en-us";
+            Type = "private";
+
             AddCategoryMapping(42, TorznabCatType.PCMac); // Applications/Mac
             AddCategoryMapping(34, TorznabCatType.PC); // Applications/PC
             AddCategoryMapping(66, TorznabCatType.MoviesForeign); // Foreign
@@ -94,7 +99,12 @@ namespace Jackett.Indexers
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
+
+            // reset cookies, if we send expired cookies for a new session their code seems to get confused
+            // Due to the session not getting initiated correctly it will result in errors like this:
+            // Notice: Undefined index: simpleCaptchaAnswer in /var/www/html/takelogin.php on line 17
+            CookieHeader = null;
 
             var result1 = await RequestStringWithCookies(CaptchaUrl);
             var json1 = JObject.Parse(result1.Content);
@@ -144,6 +154,13 @@ namespace Jackett.Indexers
             searchUrl += "?" + queryCollection.GetQueryString();
 
             var results = await RequestStringWithCookiesAndRetry(searchUrl);
+
+            if (results.IsRedirect)
+            {
+                await ApplyConfiguration(null);
+                results = await RequestStringWithCookiesAndRetry(searchUrl);
+            }
+
             try
             {
                 CQ dom = results.Content;
@@ -195,6 +212,16 @@ namespace Jackett.Indexers
                         pubDateUtc = DateTime.SpecifyKind(DateTime.ParseExact(dateStr, "MMM d yyyy hh:mm tt", CultureInfo.InvariantCulture), DateTimeKind.Unspecified);
 
                     release.PublishDate = pubDateUtc.ToLocalTime();
+
+                    var files = qRow.Find("td:nth-child(4)").Text();
+                    release.Files = ParseUtil.CoerceInt(files);
+
+                    var grabs = qRow.Find("td:nth-child(8) > a").Html();
+                    release.Grabs = ParseUtil.CoerceInt(grabs.Split('<')[0]);
+
+                    release.DownloadVolumeFactor = 0; // ratioless
+                    
+                    release.UploadVolumeFactor = 1;
 
                     releases.Add(release);
                 }

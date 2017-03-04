@@ -24,7 +24,7 @@ namespace Jackett.Console
         [Option('t', "Tracing", HelpText = "Enable tracing")]
         public bool Tracing { get; set; }
 
-        [Option('c', "UseClient",  HelpText = "Override web client selection. [automatic(Default)/libcurl/safecurl/httpclient]")]
+        [Option('c', "UseClient",  HelpText = "Override web client selection. [automatic(Default)/libcurl/safecurl/httpclient/httpclient2]")]
         public string Client { get; set; }
 
         [Option('j', "ProxyConnection", HelpText = "use proxy - e.g. 127.0.0.1:8888")]
@@ -57,11 +57,14 @@ namespace Jackett.Console
         [Option('f', "SSLFix", HelpText = "[true/false] Linux Libcurl NSS Missing ECC Ciphers workaround (Use if you can't access some trackers) .")]
         public bool? SSLFix { get; set; }
 
-        [Option('n', "IgnoreSslErrors", HelpText = "[true/false] Linux Libcurl - Ignores invalid SSL certificates")]
+        [Option('n', "IgnoreSslErrors", HelpText = "[true/false] Ignores invalid SSL certificates")]
         public bool? IgnoreSslErrors { get; set; }
 
         [Option('d', "DataFolder", HelpText = "Specify the location of the data folder (Must be admin on Windows) eg. --DataFolder=\"D:\\Your Data\\Jackett\\\"")]
         public string DataFolder { get; set; }
+
+        [Option(HelpText = "Don't restart after update")]
+        public bool NoRestart { get; set; }
 
         [ParserState]
         public IParserState LastParserState { get; set; }

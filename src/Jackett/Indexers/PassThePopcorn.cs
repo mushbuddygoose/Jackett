@@ -11,16 +11,17 @@ using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Web;
+using System.Text;
 using Jackett.Models.IndexerConfig;
 
 namespace Jackett.Indexers
 {
     public class PassThePopcorn : BaseIndexer, IIndexer
     {
-        private string LoginUrl { get { return "https://tls.passthepopcorn.me/ajax.php?action=login"; } }
-        private string indexUrl { get { return "https://tls.passthepopcorn.me/ajax.php?action=login"; } }
-        private string SearchUrl { get { return "https://tls.passthepopcorn.me/torrents.php"; } }
-        private string DetailURL { get { return "https://tls.passthepopcorn.me/torrents.php?torrentid="; } }
+        private string LoginUrl { get { return "https://passthepopcorn.me/ajax.php?action=login"; } }
+        private string indexUrl { get { return "https://passthepopcorn.me/ajax.php?action=login"; } }
+        private string SearchUrl { get { return "https://passthepopcorn.me/torrents.php"; } }
+        private string DetailURL { get { return "https://passthepopcorn.me/torrents.php?torrentid="; } }
         private string AuthKey { get; set; } 
         new ConfigurationDataBasicLoginWithFilterAndPasskey configData
         {
@@ -41,6 +42,12 @@ namespace Jackett.Indexers
                                                                         Separate options with a space if using more than one option.<br>Filter options available:
                                                                         <br><code>GoldenPopcorn</code><br><code>Scene</code><br><code>Checked</code>"))
         {
+            Encoding = Encoding.UTF8;
+            Language = "en-us";
+            Type = "private";
+
+            TorznabCaps.SupportsImdbSearch = true;
+
             AddCategoryMapping(1, TorznabCatType.Movies);
             AddCategoryMapping(1, TorznabCatType.MoviesForeign);
             AddCategoryMapping(1, TorznabCatType.MoviesOther);
@@ -54,7 +61,7 @@ namespace Jackett.Indexers
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
 
             await DoLogin();
 
@@ -91,18 +98,17 @@ namespace Jackett.Indexers
             bool configCheckedOnly = configData.FilterString.Value.ToLowerInvariant().Contains("checked");
             string movieListSearchUrl;
 
-            if (string.IsNullOrEmpty(query.GetQueryString()))
-                movieListSearchUrl = string.Format("{0}?json=noredirect", SearchUrl);
+            if (!string.IsNullOrEmpty(query.ImdbID))
+            {
+                movieListSearchUrl = string.Format("{0}?json=noredirect&searchstr={1}", SearchUrl, HttpUtility.UrlEncode(query.ImdbID));
+            }
+            else if(!string.IsNullOrEmpty(query.GetQueryString()))
+            {
+                movieListSearchUrl = string.Format("{0}?json=noredirect&searchstr={1}", SearchUrl, HttpUtility.UrlEncode(query.GetQueryString()));
+            }
             else
             {
-                if (!string.IsNullOrEmpty(query.ImdbID))
-                {
-                    movieListSearchUrl = string.Format("{0}?json=noredirect&searchstr={1}", SearchUrl, HttpUtility.UrlEncode(query.ImdbID));
-                }
-                else
-                {
-                    movieListSearchUrl = string.Format("{0}?json=noredirect&searchstr={1}", SearchUrl, HttpUtility.UrlEncode(query.GetQueryString()));
-                }
+                movieListSearchUrl = string.Format("{0}?json=noredirect", SearchUrl);
             }
 
             var results = await RequestStringWithCookiesAndRetry(movieListSearchUrl);
@@ -132,7 +138,7 @@ namespace Jackett.Indexers
                                                 SearchUrl, HttpUtility.UrlEncode((string)torrent["Id"]), HttpUtility.UrlEncode(AuthKey), HttpUtility.UrlEncode(configData.Passkey.Value)));
                         release.MinimumRatio = 1;
                         release.MinimumSeedTime = 345600;
-                        release.Category = 2000;
+                        release.Category = new List<int> { 2000 };
 
                         bool golden, scene, check;
                         bool.TryParse((string)torrent["GoldenPopcorn"], out golden);

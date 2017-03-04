@@ -8,6 +8,7 @@ using NLog;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using Jackett.Models.IndexerConfig;
 using System.Collections.Specialized;
@@ -40,6 +41,10 @@ namespace Jackett.Indexers
                 p: ps,
                 configData: new ConfigurationDataBasicLoginWithRSSAndDisplay())
         {
+            Encoding = Encoding.GetEncoding("UTF-8");
+            Language = "de-de";
+            Type = "private";
+
             this.configData.DisplayText.Value = "Only the results from the first search result page are shown, adjust your profile settings to show the maximum.";
             this.configData.DisplayText.Name = "Notice";
 
@@ -90,7 +95,7 @@ namespace Jackett.Indexers
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
 
             var result1 = await RequestStringWithCookies(CaptchaUrl);
             var json1 = JObject.Parse(result1.Content);
@@ -128,6 +133,7 @@ namespace Jackett.Indexers
                 // use AND+wildcard operator to avoid getting to many useless results
                 var searchStringArray = Regex.Split(searchString.Trim(), "[ _.-]+", RegexOptions.Compiled).ToList();
                 searchStringArray = searchStringArray.Where(x => x.Length >= 3).ToList(); //  remove words with less than 3 characters
+                searchStringArray = searchStringArray.Where(x => !new string[] { "der", "die", "das", "the" }.Contains(x.ToLower())).ToList(); //  remove words with less than 3 characters
                 searchStringArray = searchStringArray.Select(x => "+" + x + "*").ToList(); // add AND operators+wildcards
                 var searchStringFinal = String.Join(" ", searchStringArray);
                 queryCollection.Add("search", searchStringFinal);
@@ -145,6 +151,7 @@ namespace Jackett.Indexers
             {
                 CQ dom = results.Content;
                 var rows = dom["table.torrent_table > tbody > tr"];
+                var globalFreeleech = dom.Find("legend:contains(\"Freeleech\")+ul > li > b:contains(\"Freeleech\")").Any();
                 foreach (var row in rows.Skip(1))
                 {
                     var release = new ReleaseInfo();
@@ -164,7 +171,7 @@ namespace Jackett.Indexers
                     var qCommentLink = descCol.FirstElementChild.Cq();
                     var torrentTag = descCol.Cq().Find("span.torrent-tag");
                     var torrentTags = torrentTag.Elements.Select(x => x.InnerHTML).ToList();
-                    release.Title = qCommentLink.Text();
+                    release.Title = qCommentLink.Attr("title");
                     release.Description = String.Join(", ", torrentTags);
                     release.Comments = new Uri(SiteLink + "/" + qCommentLink.Attr("href").Replace("&hit=1", ""));
                     release.Guid = release.Comments;
@@ -187,6 +194,18 @@ namespace Jackett.Indexers
 
                     release.Seeders = ParseUtil.CoerceInt(row.ChildElements.ElementAt(7).Cq().Text());
                     release.Peers = ParseUtil.CoerceInt(row.ChildElements.ElementAt(8).Cq().Text()) + release.Seeders;
+
+                    var grabs = qRow.Find("td:nth-child(7)").Text();
+                    release.Grabs = ParseUtil.CoerceInt(grabs);
+
+                    if (globalFreeleech)
+                        release.DownloadVolumeFactor = 0;
+                    else if (qRow.Find("span.torrent-tag-free").Length >= 1)
+                        release.DownloadVolumeFactor = 0;
+                    else
+                        release.DownloadVolumeFactor = 1;
+
+                    release.UploadVolumeFactor = 1;
 
                     releases.Add(release);
                 }

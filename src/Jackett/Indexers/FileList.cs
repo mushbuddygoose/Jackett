@@ -17,6 +17,7 @@ using System.Threading.Tasks;
 using System.Web;
 using Jackett.Models.IndexerConfig;
 using Jackett.Models.IndexerConfig.Bespoke;
+using System.Text.RegularExpressions;
 
 namespace Jackett.Indexers
 {
@@ -42,34 +43,39 @@ namespace Jackett.Indexers
                 p: ps,
                 configData: new ConfigurationDataFileList())
         {
-            AddCategoryMapping(24, TorznabCatType.TVAnime);
-            AddCategoryMapping(11, TorznabCatType.Audio);
-            AddCategoryMapping(15, TorznabCatType.TV);
-            //AddCategoryMapping(18, TorznabCatType.); Other
-            AddCategoryMapping(16, TorznabCatType.TVDocumentary);
-            AddCategoryMapping(25, TorznabCatType.Movies3D);
-            AddCategoryMapping(20, TorznabCatType.MoviesBluRay);
-            AddCategoryMapping(2, TorznabCatType.MoviesSD);
-            AddCategoryMapping(3, TorznabCatType.MoviesForeign); //RO
-            AddCategoryMapping(4, TorznabCatType.MoviesHD);
-            AddCategoryMapping(19, TorznabCatType.MoviesForeign); // RO
-            AddCategoryMapping(1, TorznabCatType.MoviesSD);
-            AddCategoryMapping(10, TorznabCatType.Console);
-            AddCategoryMapping(9, TorznabCatType.PCGames);
-            //AddCategoryMapping(17, TorznabCatType); Linux No cat
+            Encoding = Encoding.GetEncoding("UTF-8");
+            Language = "ro-ro";
+            Type = "private";
+
+            TorznabCaps.SupportsImdbSearch = true;
+
+            AddCategoryMapping(24, TorznabCatType.TVAnime); //Anime
+            AddCategoryMapping(11, TorznabCatType.Audio); //Audio
+            AddCategoryMapping(18, TorznabCatType.Other); //Misc
+            AddCategoryMapping(16, TorznabCatType.Books); //Docs
+            AddCategoryMapping(25, TorznabCatType.Movies3D); //Movies 3D
+            AddCategoryMapping(20, TorznabCatType.MoviesBluRay); // Movies Blu-Ray
+            AddCategoryMapping(2, TorznabCatType.MoviesDVD); //Movies DVD
+            AddCategoryMapping(3, TorznabCatType.MoviesForeign); //Movies DVD-RO
+            AddCategoryMapping(4, TorznabCatType.MoviesHD); //Movies HD
+            AddCategoryMapping(19, TorznabCatType.MoviesForeign); //Movies HD-RO
+            AddCategoryMapping(1, TorznabCatType.MoviesSD); //Movies SD
+            AddCategoryMapping(10, TorznabCatType.Console); //Console Games
+            AddCategoryMapping(9, TorznabCatType.PCGames); //PC Games
+            AddCategoryMapping(17, TorznabCatType.PC); //Linux
             AddCategoryMapping(22, TorznabCatType.PCPhoneOther); //Apps/mobile
-            AddCategoryMapping(8, TorznabCatType.PC);
-            AddCategoryMapping(21, TorznabCatType.TVHD);
-            AddCategoryMapping(23, TorznabCatType.TVSD);
-            AddCategoryMapping(13, TorznabCatType.TVSport);
-            AddCategoryMapping(14, TorznabCatType.TV);
-            AddCategoryMapping(12, TorznabCatType.AudioVideo);
-            AddCategoryMapping(7, TorznabCatType.XXX);
+            AddCategoryMapping(8, TorznabCatType.PC); //Software
+            AddCategoryMapping(21, TorznabCatType.TVHD); //TV HD
+            AddCategoryMapping(23, TorznabCatType.TVSD); //TV SD
+            AddCategoryMapping(13, TorznabCatType.TVSport); //Sport
+            AddCategoryMapping(14, TorznabCatType.TV); //TV
+            AddCategoryMapping(12, TorznabCatType.AudioVideo); //Music Video
+            AddCategoryMapping(7, TorznabCatType.XXX); //XXX
         }
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
             var pairs = new Dictionary<string, string> {
                 { "username", configData.Username.Value },
                 { "password", configData.Password.Value }
@@ -98,32 +104,59 @@ namespace Jackett.Indexers
                 cat = cats[0];
             }
 
-            if (!string.IsNullOrWhiteSpace(searchString) || cat != "0")
-                searchUrl += string.Format("?search={0}&cat={1}&searchin=0&sort=0", HttpUtility.UrlEncode(searchString), cat);
+            var queryCollection = new NameValueCollection();
 
+            if (query.ImdbID != null)
+            {
+                queryCollection.Add("search", query.ImdbID);
+            }
+            else if (!string.IsNullOrWhiteSpace(searchString))
+            {
+                queryCollection.Add("search", searchString);
+            }
 
+            queryCollection.Add("cat", cat);
+            queryCollection.Add("searchin", "0");
+            queryCollection.Add("sort", "0");
+
+            searchUrl += "?" + queryCollection.GetQueryString();
 
             var response = await RequestStringWithCookiesAndRetry(searchUrl, null, BrowseUrl);
             var results = response.Content;
             try
             {
                 CQ dom = results;
+                var globalFreeLeech = dom.Find("div.globalFreeLeech").Any();
                 var rows = dom[".torrentrow"];
                 foreach (var row in rows)
                 {
                     var release = new ReleaseInfo();
                     var qRow = row.Cq();
                     var qTitleLink = qRow.Find(".torrenttable:eq(1) a").First();
-                    release.Title = qRow.Find(".torrenttable:eq(1) a b").Text().Trim();
-                    release.Description = release.Title;
+                    release.Title = qRow.Find(".torrenttable:eq(1) b").Text();
+
+                    if (query.ImdbID == null && !query.MatchQueryStringAND(release.Title))
+                        continue;
+
+                    release.Description = qRow.Find(".torrenttable:eq(1) > span > font.small").First().Text();
+
+                    var tooltip = qTitleLink.Attr("title");
+                    if (!string.IsNullOrEmpty(tooltip))
+                    {
+                        var ImgRegexp = new Regex("src='(.*?)'");
+                        var ImgRegexpMatch = ImgRegexp.Match(tooltip);
+                        if (ImgRegexpMatch.Success)
+                            release.BannerUrl = new Uri(ImgRegexpMatch.Groups[1].Value);
+                    }
+
                     release.Guid = new Uri(SiteLink + qTitleLink.Attr("href"));
                     release.Comments = release.Guid;
 
                     //22:05:3716/02/2013
-                    var dateStr = qRow.Find(".torrenttable:eq(5)").Text().Trim();
-                    release.PublishDate = DateTime.ParseExact(dateStr, "H:mm:ssdd/MM/yyyy", CultureInfo.InvariantCulture).AddHours(-2);
+                    var dateStr = qRow.Find(".torrenttable:eq(5)").Text().Trim()+" +0200";
+                    release.PublishDate = DateTime.ParseExact(dateStr, "H:mm:ssdd/MM/yyyy zzz", CultureInfo.InvariantCulture);
 
-                    var qLink = qRow.Find(".torrenttable:eq(2) a").First();
+                    var qLink = qRow.Find("a[href^=\"download.php?id=\"]").First();
                     release.Link = new Uri(SiteLink + qLink.Attr("href"));
 
                     var sizeStr = qRow.Find(".torrenttable:eq(6)").Text().Trim();
@@ -135,15 +168,21 @@ namespace Jackett.Indexers
                     var catId = qRow.Find(".torrenttable:eq(0) a").First().Attr("href").Substring(15);
                     release.Category = MapTrackerCatToNewznab(catId);
 
-                    // Skip other
-                    if (release.Category != 0)
-                    {
-                        // Skip Romanian releases
-                        if (release.Category == TorznabCatType.MoviesForeign.ID && !configData.IncludeRomanianReleases.Value)
-                            continue;
+                    var grabs = qRow.Find(".torrenttable:eq(7)").First().Get(0).FirstChild;
+                    release.Grabs = ParseUtil.CoerceLong(catId);
 
-                        releases.Add(release);
-                    }
+                    if (globalFreeLeech || row.Cq().Find("img[alt=\"FreeLeech\"]").Any())
+                        release.DownloadVolumeFactor = 0;
+                    else
+                        release.DownloadVolumeFactor = 1;
+
+                    release.UploadVolumeFactor = 1;
+
+                    // Skip Romanian releases
+                    if (release.Category.Contains(TorznabCatType.MoviesForeign.ID) && !configData.IncludeRomanianReleases.Value)
+                        continue;
+
+                    releases.Add(release);
                 }
             }
             catch (Exception ex)

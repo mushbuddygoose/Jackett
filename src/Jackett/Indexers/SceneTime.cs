@@ -8,6 +8,7 @@ using NLog;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using Jackett.Models.IndexerConfig;
 using System.Text.RegularExpressions;
@@ -38,6 +39,10 @@ namespace Jackett.Indexers
                 p: ps,
                 configData: new ConfigurationDataRecaptchaLogin("For best results, change the 'Torrents per page' setting to the maximum in your profile on the SceneTime webpage."))
         {
+            Encoding = Encoding.GetEncoding("iso-8859-1");
+            Language = "en-us";
+            Type = "private";
+
             AddCategoryMapping(1, TorznabCatType.MoviesSD);
             AddCategoryMapping(3, TorznabCatType.MoviesDVD);
             AddCategoryMapping(47, TorznabCatType.MoviesSD);
@@ -83,7 +88,8 @@ namespace Jackett.Indexers
         {
             var loginPage = await RequestStringWithCookies(StartPageUrl, string.Empty);
             CQ cq = loginPage.Content;
-            var result = new ConfigurationDataRecaptchaLogin();
+            var result = this.configData;
+            result.Captcha.Version = "2";
             CQ recaptcha = cq.Find(".g-recaptcha").Attr("data-sitekey");
             if (recaptcha.Length != 0)
             {
@@ -94,6 +100,9 @@ namespace Jackett.Indexers
             else
             {
                 var stdResult = new ConfigurationDataBasicLogin();
+                stdResult.SiteLink.Value = configData.SiteLink.Value;
+                stdResult.Username.Value = configData.Username.Value;
+                stdResult.Password.Value = configData.Password.Value;
                 stdResult.CookieHeader.Value = loginPage.Cookies;
                 return stdResult;
             }
@@ -101,7 +110,7 @@ namespace Jackett.Indexers
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
             var pairs = new Dictionary<string, string> {
                 { "username", configData.Username.Value },
                 { "password", configData.Password.Value },
@@ -160,12 +169,12 @@ namespace Jackett.Indexers
             }
 
             var results = await PostDataWithCookiesAndRetry(SearchUrl, qParams);
-            List<ReleaseInfo> releases = ParseResponse(results.Content);
+            List<ReleaseInfo> releases = ParseResponse(query, results.Content);
             
             return releases;
         }
 
-        public List<ReleaseInfo> ParseResponse(string htmlResponse)
+        public List<ReleaseInfo> ParseResponse(TorznabQuery query, string htmlResponse)
         {
             List<ReleaseInfo> releases = new List<ReleaseInfo>();
 
@@ -196,6 +205,9 @@ namespace Jackett.Indexers
                     var qDescCol = descCol.Cq();
                     var qLink = qDescCol.Find("a");
                     release.Title = qLink.Text();
+                    if (!query.MatchQueryStringAND(release.Title))
+                        continue;
+
                     release.Description = release.Title;
                     release.Comments = new Uri(SiteLink + "/" + qLink.Attr("href"));
                     release.Guid = release.Comments;
@@ -209,6 +221,13 @@ namespace Jackett.Indexers
 
                     release.Seeders = ParseUtil.CoerceInt(row.ChildElements.ElementAt(seedersIndex).Cq().Text().Trim());
                     release.Peers = ParseUtil.CoerceInt(row.ChildElements.ElementAt(leechersIndex).Cq().Text().Trim()) + release.Seeders;
+
+                    if (row.Cq().Find("font > b:contains(Freeleech)").Length >= 1)
+                        release.DownloadVolumeFactor = 0;
+                    else
+                        release.DownloadVolumeFactor = 1;
+
+                    release.UploadVolumeFactor = 1;
 
                     releases.Add(release);
                 }

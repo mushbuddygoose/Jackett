@@ -48,11 +48,14 @@ namespace Jackett.Indexers
                 p: ps,
                 configData: new ConfigurationDataBasicLoginWithRSS())
         {
+            Encoding = Encoding.UTF8;
+            Language = "en-us";
+            Type = "private";
         }
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
             var pairs = new Dictionary<string, string> {
                 { "referer", "login"},
                 { "query", ""},
@@ -206,11 +209,11 @@ namespace Jackett.Indexers
             {
                 if (release.Title.Contains("1080p") || release.Title.Contains("720p"))
                 {
-                    release.Category = TorznabCatType.TVHD.ID;
+                    release.Category = new List<int> { TorznabCatType.TVHD.ID };
                 }
                 else
                 {
-                    release.Category = TorznabCatType.TVSD.ID;
+                    release.Category = new List<int> { TorznabCatType.TVSD.ID };
                 }
             }
 

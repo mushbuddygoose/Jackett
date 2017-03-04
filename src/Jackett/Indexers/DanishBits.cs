@@ -8,11 +8,13 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Web;
 using CsQuery.ExtensionMethods;
 using Jackett.Models.IndexerConfig;
+using Jackett.Utils;
 
 namespace Jackett.Indexers
 {
@@ -38,6 +40,10 @@ namespace Jackett.Indexers
                 p: ps,
                 configData: new NxtGnConfigurationData())
         {
+            Encoding = Encoding.GetEncoding("UTF-8");
+            Language = "da-dk";
+            Type = "private";
+
             // Movies Mapping
             // DanishBits HD
             AddCategoryMapping(2, TorznabCatType.MoviesHD);
@@ -121,7 +127,7 @@ namespace Jackett.Indexers
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
             var pairs = new Dictionary<string, string> {
                 { "username", configData.Username.Value },
                 { "password", configData.Password.Value },
@@ -217,13 +223,13 @@ namespace Jackett.Indexers
                         ? seriesCatsDanish
                         : seriesCatsDanish.Concat(seriesCatsIntl);
                     if (moviesCats.Contains(catNo))
-                        release.Category = TorznabCatType.Movies.ID;
+                        release.Category = new List<int> { TorznabCatType.Movies.ID };
                     else if (seriesCats.Contains(catNo))
-                        release.Category = TorznabCatType.TV.ID;
+                        release.Category = new List<int> { TorznabCatType.TV.ID };
                     else if (catNo == 12)
-                        release.Category = TorznabCatType.BooksEbook.ID;
+                        release.Category = new List<int> { TorznabCatType.BooksEbook.ID };
                     else if (catNo == 6)
-                        release.Category = TorznabCatType.AudioAudiobook.ID;
+                        release.Category = new List<int> { TorznabCatType.AudioAudiobook.ID };
                     else
                         continue;
 
@@ -231,12 +237,9 @@ namespace Jackett.Indexers
                     var title = titleAnchor.GetAttribute("title");
                     release.Title = title;
 
-                    var dlUrlAnchor = qRow.Find("span.right a").FirstElement();
+                    var dlUrlAnchor = qRow.Find("span.right a[title=\"Direkte download link\"]").FirstElement();
                     var dlUrl = dlUrlAnchor.GetAttribute("href");
-                    var authkey = Regex.Match(dlUrl, "authkey=(?<authkey>[0-9a-zA-Z]+)").Groups["authkey"].Value;
-                    var torrentPass = Regex.Match(dlUrl, "torrent_pass=(?<torrent_pass>[0-9a-zA-Z]+)").Groups["torrent_pass"].Value;
-                    var torrentId = Regex.Match(dlUrl, "id=(?<id>[0-9]+)").Groups["id"].Value;
-                    release.Link = new Uri($"{SearchUrl}/{title}.torrent/?action=download&authkey={authkey}&torrent_pass={torrentPass}&id={torrentId}");
+                    release.Link = new Uri(SiteLink + dlUrl);
 
                     var torrentLink = titleAnchor.GetAttribute("href");
                     release.Guid = new Uri(SiteLink + torrentLink);
@@ -264,6 +267,23 @@ namespace Jackett.Indexers
                         var referrerUrl = imdbAnchor.GetAttribute("href");
                         release.Imdb = long.Parse(Regex.Match(referrerUrl, "tt(?<imdbId>[0-9]+)").Groups["imdbId"].Value);
                     }
+
+                    var Files = qRow.Find("td:nth-child(3) > div");
+                    release.Files = ParseUtil.CoerceLong(Files.Text().Split(' ')[0]);
+
+                    var Grabs = qRow.Find("td:nth-child(6)");
+                    release.Grabs = ParseUtil.CoerceLong(Grabs.Text());
+
+                    if (qRow.Find("span.freeleech, img[src=\"/static/common/torrents/gratis.png\"]").Length >= 1)
+                        release.DownloadVolumeFactor = 0;
+                    else
+                        release.DownloadVolumeFactor = 1;
+
+                    if (qRow.Find("img[src=\"/static/common/torrents/toxupload.png\"]").Length >= 1)
+                        release.UploadVolumeFactor = 2;
+                    else
+                        release.UploadVolumeFactor = 1;
+
                     releases.Add(release);
                 }
             }

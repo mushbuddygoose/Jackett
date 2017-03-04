@@ -10,10 +10,11 @@ using Jackett.Utils;
 using Jackett.Utils.Clients;
 using AutoMapper;
 using Jackett.Models;
+using System.Reflection;
 
 namespace Jackett
 {
-    public class JackettModule : Module
+    public class JackettModule : Autofac.Module
     {
         protected override void Load(ContainerBuilder builder)
         {
@@ -29,6 +30,9 @@ namespace Jackett
                 case "httpclient":
                     builder.RegisterType<HttpWebClient>().As<IWebClient>();
                     break;
+                case "httpclient2":
+                    builder.RegisterType<HttpWebClient2>().As<IWebClient>();
+                    break;
                 case "safecurl":
                     builder.RegisterType<UnixSafeCurlWebClient>().As<IWebClient>();
                     break;
@@ -39,7 +43,32 @@ namespace Jackett
                     default:
                     if (System.Environment.OSVersion.Platform == PlatformID.Unix)
                     {
-                        builder.RegisterType<UnixLibCurlWebClient>().As<IWebClient>();
+                        var usehttpclient = false;
+                        try { 
+                            Type monotype = Type.GetType("Mono.Runtime");
+                            if (monotype != null)
+                            {
+                                MethodInfo displayName = monotype.GetMethod("GetDisplayName", BindingFlags.NonPublic | BindingFlags.Static);
+                                if (displayName != null)
+                                { 
+                                    var monoVersion = displayName.Invoke(null, null).ToString();
+                                    var monoVersionO = new Version(monoVersion.Split(' ')[0]);
+                                    if (monoVersionO.Major >= 4 && monoVersionO.Minor >= 8)
+                                    {
+                                        usehttpclient = true;
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception e)
+                        {
+                            Console.Out.WriteLine("Error while deciding which HttpWebClient to use: " + e);
+                        }
+
+                        if (usehttpclient)
+                            builder.RegisterType<HttpWebClient>().As<IWebClient>();
+                        else
+                            builder.RegisterType<UnixLibCurlWebClient>().As<IWebClient>();
                     }
                     else
                     {
@@ -75,7 +104,15 @@ namespace Jackett
 
             Mapper.CreateMap<ReleaseInfo, TrackerCacheResult>().AfterMap((r, t) =>
             {
-                t.CategoryDesc = TorznabCatType.GetCatDesc(r.Category);
+                if (r.Category != null)
+                {
+                    var CategoryDesc = string.Join(", ", r.Category.Select(x => TorznabCatType.GetCatDesc(x)).Where(x => !string.IsNullOrEmpty(x)));
+                    t.CategoryDesc = CategoryDesc;
+                }
+                else
+                {
+                    t.CategoryDesc = "";
+                }
             });
         }
     }

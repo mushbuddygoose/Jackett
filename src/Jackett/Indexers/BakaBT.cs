@@ -40,12 +40,15 @@ namespace Jackett.Indexers
                 p: ps,
                 configData: new ConfigurationDataBasicLogin())
         {
+            Encoding = Encoding.UTF8;
+            Language = "en-us";
+            Type = "private";
         }
 
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
 
             var loginForm = await webclient.GetString(new Utils.Clients.WebRequest()
                 {
@@ -91,13 +94,13 @@ namespace Jackett.Indexers
             try
             {
                 CQ dom = response.Content;
-                var rows = dom[".torrents tr.torrent"];
+                var rows = dom[".torrents tr.torrent, .torrents tr.torrent_alt"];
 
                 foreach (var row in rows)
                 {
 
                     var qRow = row.Cq();
-                    var qTitleLink = qRow.Find("a.title").First();
+                    var qTitleLink = qRow.Find("a.title, a.alt_title").First();
                     var title = qTitleLink.Text().Trim();
 
                     // Insert before the release info

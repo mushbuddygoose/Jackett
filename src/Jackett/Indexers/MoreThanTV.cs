@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Web;
@@ -14,6 +15,7 @@ using AngleSharp.Dom;
 using AngleSharp.Parser.Html;
 using CsQuery;
 using Jackett.Models.IndexerConfig;
+using Jackett.Utils;
 
 namespace Jackett.Indexers
 {
@@ -38,11 +40,14 @@ namespace Jackett.Indexers
                 p: ps,
                 configData: new ConfigurationDataBasicLogin())
         {
+            Encoding = Encoding.GetEncoding("UTF-8");
+            Language = "en-us";
+            Type = "private";
         }
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            ConfigData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
             var pairs = new Dictionary<string, string> {
                 { "username", ConfigData.Username.Value },
                 { "password", ConfigData.Password.Value },
@@ -66,7 +71,7 @@ namespace Jackett.Indexers
 
         public async Task<IEnumerable<ReleaseInfo>> PerformQuery(TorznabQuery query)
         {
-            var isTv = Array.IndexOf(query.Categories, TorznabCatType.TV.ID) > -1;
+            var isTv = TorznabCatType.QueryContainsParentCategory(query.Categories, new List<int> { TorznabCatType.TV.ID });
             var releases = new List<ReleaseInfo>();
             var searchQuery = query.GetQueryString();
 
@@ -104,6 +109,12 @@ namespace Jackett.Indexers
         {
             var searchUrl = GetTorrentSearchUrl(query.Categories, searchQuery);
             var response = await RequestStringWithCookiesAndRetry(searchUrl);
+            if (response.IsRedirect)
+            {
+                // re login
+                await ApplyConfiguration(null);
+                response = await RequestStringWithCookiesAndRetry(searchUrl);
+            }
 
             try
             {
@@ -155,7 +166,7 @@ namespace Jackett.Indexers
                                 qualityEdition, // Audio quality should be after this one. Unobtainable at the moment.
                                 $"{qualityData[0].Trim()}-MTV"
                             });
-                            
+
                             releases.Add(GetReleaseInfo(groupItem, downloadAnchor, title, TorznabCatType.TV.ID));
                         }
                         else
@@ -203,7 +214,9 @@ namespace Jackett.Indexers
             // Parse required data
             var downloadAnchorHref = downloadAnchor.Attributes["href"].Value;
             var torrentId = downloadAnchorHref.Substring(downloadAnchorHref.LastIndexOf('=') + 1);
-            var publishDate = DateTime.ParseExact(row.QuerySelector(".time.tooltip").Attributes["title"].Value, "MMM dd yyyy, HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal);
+            var qFiles = row.QuerySelector("td:nth-last-child(6)");
+            var files = ParseUtil.CoerceLong(qFiles.TextContent);
+            var publishDate = DateTime.ParseExact(row.QuerySelector(".time.tooltip").Attributes["title"].Value, "MMM dd yyyy, HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal).ToLocalTime();
             var torrentData = row.QuerySelectorAll(".number_column"); // Size (xx.xx GB[ (Max)]) Snatches (xx) Seeders (xx) Leechers (xx)
 
             if (torrentData.Length != 4)
@@ -212,7 +225,8 @@ namespace Jackett.Indexers
             if (torrentId.Contains('#'))
                 torrentId = torrentId.Split('#')[0];
 
-            var size = ParseSizeToBytes(torrentData[0].TextContent);
+            var size = ReleaseInfo.GetBytes(torrentData[0].TextContent);
+            var grabs = int.Parse(torrentData[1].TextContent);
             var seeders = int.Parse(torrentData[2].TextContent);
             var guid = new Uri(GuidUrl + torrentId);
 
@@ -220,15 +234,18 @@ namespace Jackett.Indexers
             return new ReleaseInfo
             {
                 Title = title,
-                Description = title,
-                Category = category, // Who seasons movies right
+                Category = new List<int> { category }, // Who seasons movies right
                 Link = new Uri(DownloadUrl + torrentId),
                 PublishDate = publishDate,
                 Seeders = seeders,
                 Peers = seeders,
+                Files = files,
                 Size = size,
+                Grabs = grabs,
                 Guid = guid,
-                Comments = guid
+                Comments = guid,
+                DownloadVolumeFactor = 0, // ratioless tracker
+                UploadVolumeFactor = 1
             };
         }
 
@@ -243,30 +260,5 @@ namespace Jackett.Indexers
 
             return season;
         }
-
-        // Changes "xx.xx GB/MB" to bytes
-        private static long ParseSizeToBytes(string strSize)
-        {
-            var sizeParts = strSize.Split(' ');
-            if (sizeParts.Length != 2)
-                throw new Exception($"We expected 2 size parts, instead we have {sizeParts.Length}.");
-
-            var size = double.Parse(sizeParts[0]);
-
-            switch (sizeParts[1].Trim())
-            {
-                case "GB":
-                    size = size*1000*1000*1000;
-                    break;
-                case "MB":
-                    size = size*1000*1000;
-                    break;
-                default:
-                    throw new Exception($"Unknown size type {sizeParts[1].Trim()}.");
-            }
-
-            return (long) Math.Ceiling(size);
-        }
-
     }
 }

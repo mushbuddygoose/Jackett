@@ -61,7 +61,9 @@ namespace Jackett.Indexers
                 p: ps,
                 configData: new ConfigurationDataAnimeBytes())
         {
-
+            Encoding = Encoding.GetEncoding("UTF-8");
+            Language = "en-us";
+            Type = "private";
         }
 
 
@@ -73,7 +75,7 @@ namespace Jackett.Indexers
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
 
             lock (cache)
             {
@@ -83,15 +85,18 @@ namespace Jackett.Indexers
             // Get the login form as we need the CSRF Token
             var loginPage = await webclient.GetString(new Utils.Clients.WebRequest()
             {
-                Url = LoginUrl
+                Url = LoginUrl,
+                Encoding = Encoding
             });
 
             CQ loginPageDom = loginPage.Content;
-            var csrfToken = loginPageDom["input[name=\"csrf_token\"]"].Last();
+            var csrfIndex = loginPageDom["input[name=\"_CSRF_INDEX\"]"].Last();
+            var csrfToken = loginPageDom["input[name=\"_CSRF_TOKEN\"]"].Last();
 
             // Build login form
             var pairs = new Dictionary<string, string> {
-                    { "csrf_token", csrfToken.Attr("value") },
+                    { "_CSRF_INDEX", csrfIndex.Attr("value") },
+                    { "_CSRF_TOKEN", csrfToken.Attr("value") },
                     { "username", configData.Username.Value },
                     { "password", configData.Password.Value },
                     { "keeplogged_sent", "true" },
@@ -106,6 +111,7 @@ namespace Jackett.Indexers
                 PostData = pairs,
                 Referer = LoginUrl,
                 Type = RequestType.POST,
+                Encoding = Encoding,
                 Url = LoginUrl
             };
             var response = await RequestLoginAndFollowRedirect(LoginUrl, pairs, loginPage.Cookies, true, null);
@@ -207,6 +213,13 @@ namespace Jackett.Indexers
             
             // Get the content from the tracker
             var response = await RequestStringWithCookiesAndRetry(queryUrl);
+            if (response.IsRedirect)
+            {
+                // re-login
+                await ApplyConfiguration(null);
+                response = await RequestStringWithCookiesAndRetry(queryUrl);
+            }
+
             CQ dom = response.Content;
 
             // Parse
@@ -316,38 +329,38 @@ namespace Jackett.Indexers
                                 var infoLink = links.Get(1);
                                 release.Comments = new Uri(SiteLink + infoLink.Attributes.GetAttribute("href"));
                                 release.Guid = new Uri(SiteLink + infoLink.Attributes.GetAttribute("href") + "&nh=" + StringUtil.Hash(title)); // Sonarr should dedupe on this url - allow a url per name.
-                                release.Link = new Uri(downloadLink.Attributes.GetAttribute("href"), UriKind.Relative);
+                                release.Link = new Uri(downloadLink.Attributes.GetAttribute("href"));
 
                                 string category = null;
                                 if (searchType == SearchType.Video)
                                 {
                                     category = seriesCq.Find("a[title=\"View Torrent\"]").Text().Trim();
                                     if (category == "TV Series")
-                                        release.Category = TorznabCatType.TVAnime.ID;
+                                        release.Category = new List<int> { TorznabCatType.TVAnime.ID };
 
                                     // Ignore these categories as they'll cause hell with the matcher
                                     // TV Special, OVA, ONA, DVD Special, BD Special
 
                                     if (category == "Movie")
-                                        release.Category = TorznabCatType.Movies.ID;
+                                        release.Category = new List<int> { TorznabCatType.Movies.ID };
 
                                     if (category == "Manga" || category == "Oneshot" || category == "Anthology" || category == "Manhwa" || category == "Manhua" || category == "Light Novel")
-                                        release.Category = TorznabCatType.BooksComics.ID;
+                                        release.Category = new List<int> { TorznabCatType.BooksComics.ID };
 
                                     if (category == "Novel" || category == "Artbook")
-                                        release.Category = TorznabCatType.BooksComics.ID;
+                                        release.Category = new List<int> { TorznabCatType.BooksComics.ID };
 
                                     if (category == "Game" || category == "Visual Novel")
                                     {
                                         var description = rowCq.Find(".torrent_properties a:eq(1)").Text();
                                         if (description.Contains(" PSP "))
-                                            release.Category = TorznabCatType.ConsolePSP.ID;
+                                            release.Category = new List<int> { TorznabCatType.ConsolePSP.ID };
                                         if (description.Contains("PSX"))
-                                            release.Category = TorznabCatType.ConsoleOther.ID;
+                                            release.Category = new List<int> { TorznabCatType.ConsoleOther.ID };
                                         if (description.Contains(" NES "))
-                                            release.Category = TorznabCatType.ConsoleOther.ID;
+                                            release.Category = new List<int> { TorznabCatType.ConsoleOther.ID };
                                         if (description.Contains(" PC "))
-                                            release.Category = TorznabCatType.PCGames.ID;
+                                            release.Category = new List<int> { TorznabCatType.PCGames.ID };
                                     }
                                 }
 
@@ -358,11 +371,11 @@ namespace Jackett.Indexers
                                     {
                                         var description = rowCq.Find(".torrent_properties a:eq(1)").Text();
                                         if (description.Contains(" Lossless "))
-                                            release.Category = TorznabCatType.AudioLossless.ID;
+                                            release.Category = new List<int> { TorznabCatType.AudioLossless.ID };
                                         else if (description.Contains("MP3"))
-                                            release.Category = TorznabCatType.AudioMP3.ID;
+                                            release.Category = new List<int> { TorznabCatType.AudioMP3.ID };
                                         else
-                                            release.Category = TorznabCatType.AudioOther.ID;
+                                            release.Category = new List<int> { TorznabCatType.AudioOther.ID };
                                     }
                                 }
 
@@ -426,7 +439,18 @@ namespace Jackett.Indexers
                                 release.Seeders = ParseUtil.CoerceInt(rowCq.Find(".torrent_seeders").Text());
                                 release.Peers = release.Seeders + ParseUtil.CoerceInt(rowCq.Find(".torrent_leechers").Text());
 
-                                if (release.Category != 0)
+                                // grabs
+                                var grabs = rowCq.Find("td.torrent_snatched").Text();
+                                release.Grabs = ParseUtil.CoerceInt(grabs);
+
+                                // freeleech
+                                if (rowCq.Find("img[alt=\"Freeleech!\"]").Length >= 1)
+                                    release.DownloadVolumeFactor = 0;
+                                else
+                                    release.DownloadVolumeFactor = 1;
+                                release.UploadVolumeFactor = 1;
+
+                                if (release.Category != null)
                                     releases.Add(release);
                             }
                         }
@@ -445,19 +469,6 @@ namespace Jackett.Indexers
             }
 
             return releases.Select(s => (ReleaseInfo)s.Clone());
-        }
-
-
-        public async override Task<byte[]> Download(Uri link)
-        {
-            // The urls for this tracker are quite long so append the domain after the incoming request.
-            var response = await webclient.GetBytes(new Utils.Clients.WebRequest()
-            {
-                Url = SiteLink + link.ToString(),
-                Cookies = CookieHeader
-            });
-
-            return response.Content;
         }
     }
 }

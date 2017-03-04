@@ -6,6 +6,7 @@ using Jackett.Utils.Clients;
 using Newtonsoft.Json.Linq;
 using NLog;
 using System;
+using System.Text;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Jackett.Models.IndexerConfig;
@@ -35,6 +36,10 @@ namespace Jackett.Indexers
                 p: ps,
                 configData: new ConfigurationDataBasicLoginWithRSSAndDisplay())
         {
+            Encoding = Encoding.GetEncoding("iso-8859-1");
+            Language = "en-us";
+            Type = "private";
+
             AddCategoryMapping(44, TorznabCatType.TVAnime); // Anime
             AddCategoryMapping(22, TorznabCatType.PC); // Applications
             AddCategoryMapping(43, TorznabCatType.AudioAudiobook); // Audio Books
@@ -49,7 +54,8 @@ namespace Jackett.Indexers
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
+
             var pairs = new Dictionary<string, string> {
                 { "username", configData.Username.Value },
                 { "password", configData.Password.Value },
@@ -92,6 +98,14 @@ namespace Jackett.Indexers
             searchUrl += "?" + queryCollection.GetQueryString();
 
             var results = await RequestStringWithCookiesAndRetry(searchUrl);
+
+            // Occasionally the cookies become invalid, login again if that happens
+            if (results.IsRedirect)
+            {
+                await ApplyConfiguration(null);
+                results = await RequestStringWithCookiesAndRetry(searchUrl);
+            }
+
             try
             {
                 CQ dom = results.Content;
@@ -127,6 +141,18 @@ namespace Jackett.Indexers
 
                     var dateStr = qTimeAgo.Text();
                     release.PublishDate = DateTimeUtil.FromTimeAgo(dateStr);
+
+                    var files = qRow.Find("td:nth-child(4)").Text();
+                    release.Files = ParseUtil.CoerceInt(files);
+
+                    var grabs = qRow.Find("td:nth-child(9)").Text();
+                    release.Grabs = ParseUtil.CoerceInt(grabs);
+
+                    var ka = qRow.Next();
+                    var DLFactor = ka.Find("table > tbody > tr:nth-child(3) > td:nth-child(2)").Text().Replace("X", "");
+                    var ULFactor = ka.Find("table > tbody > tr:nth-child(3) > td:nth-child(1)").Text().Replace("X", "");
+                    release.DownloadVolumeFactor = ParseUtil.CoerceDouble(DLFactor);
+                    release.UploadVolumeFactor = ParseUtil.CoerceDouble(ULFactor);
 
                     releases.Add(release);
                 }

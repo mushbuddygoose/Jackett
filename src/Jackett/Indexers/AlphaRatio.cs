@@ -38,6 +38,10 @@ namespace Jackett.Indexers
                 downloadBase: "https://alpharatio.cc/torrents.php?action=download&id=",
                 configData: new ConfigurationDataBasicLogin())
         {
+            Encoding = Encoding.GetEncoding("UTF-8");
+            Language = "en-us";
+            Type = "private";
+
             AddCategoryMapping(1, TorznabCatType.TVSD);
             AddCategoryMapping(2, TorznabCatType.TVHD);
             AddCategoryMapping(6, TorznabCatType.MoviesSD);
@@ -64,7 +68,7 @@ namespace Jackett.Indexers
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
             var pairs = new Dictionary<string, string> {
                 { "username", configData.Username.Value },
                 { "password", configData.Password.Value },
@@ -94,6 +98,24 @@ namespace Jackett.Indexers
             release.Comments = release.Guid;
             release.Link = new Uri(DownloadUrl + id);
             release.Category = MapTrackerCatToNewznab(CategoryReverseMapper((string)r["category"]));
+            release.Files = (int)r["fileCount"];
+            release.Grabs = (int)r["snatches"];
+            release.DownloadVolumeFactor = 1;
+            release.UploadVolumeFactor = 1;
+            if ((bool)r["isFreeleech"])
+            {
+                release.DownloadVolumeFactor = 0;
+            }
+            if ((bool)r["isPersonalFreeleech"])
+            {
+                release.DownloadVolumeFactor = 0;
+            }
+            if ((bool)r["isNeutralLeech"])
+            {
+                release.DownloadVolumeFactor = 0;
+                release.UploadVolumeFactor = 0;
+            }
+
         }
 
         public async Task<IEnumerable<ReleaseInfo>> PerformQuery(TorznabQuery query)
@@ -116,6 +138,11 @@ namespace Jackett.Indexers
 
             searchUrl += queryCollection.GetQueryString();
             var response = await RequestStringWithCookiesAndRetry(searchUrl);
+            if (response.IsRedirect)
+            {
+                await ApplyConfiguration(null);
+                response = await RequestStringWithCookiesAndRetry(searchUrl);
+            }
 
             try
             {

@@ -37,6 +37,10 @@ namespace Jackett.Indexers
                    p: ps,
                    configData: new ConfigurationDataBasicLoginWithRSSAndDisplay())
         {
+            Encoding = Encoding.GetEncoding("iso-8859-1");
+            Language = "de-de";
+            Type = "private";
+
             AddCategoryMapping(39, TorznabCatType.TVAnime); // Anime: HD|1080p
             AddCategoryMapping(38, TorznabCatType.TVAnime); // Anime: HD|720p
             AddCategoryMapping(1,  TorznabCatType.TVAnime); // Anime: SD
@@ -93,7 +97,7 @@ namespace Jackett.Indexers
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
 
             var pairs = new Dictionary<string, string>
             {
@@ -146,8 +150,8 @@ namespace Jackett.Indexers
 
             searchUrl += "?" + queryCollection.GetQueryString();
 
-            var response = await RequestBytesWithCookies(searchUrl);
-            var results = Encoding.GetEncoding("iso-8859-1").GetString(response.Content);
+            var response = await RequestStringWithCookies(searchUrl);
+            var results = response.Content;
             try
             {
                 CQ dom = results;
@@ -162,6 +166,9 @@ namespace Jackett.Indexers
 
                     var qDetailsLink = qRow.Find("a[href^=details.php?id=]").First();
                     release.Title = qDetailsLink.Text();
+
+                    if (!query.MatchQueryStringAND(release.Title))
+                        continue;
 
                     var qCatLink = qRow.Find("a[href^=browse.php?cat=]").First();
                     var qSeeders = qRow.Find("td > table.testtable > tbody > tr > td > strong:eq(3)");
@@ -184,7 +191,6 @@ namespace Jackett.Indexers
                     release.Guid = release.Link;
 
                     var sizeStr = qSize.Text();
-                    logger.Error(sizeStr);
                     release.Size = ReleaseInfo.GetBytes(sizeStr.Replace(".", "").Replace(",", "."));
 
                     release.Seeders = ParseUtil.CoerceInt(qSeeders.Text());
@@ -194,6 +200,16 @@ namespace Jackett.Indexers
                     var dateGerman = DateTime.SpecifyKind(DateTime.ParseExact(dateStr, "dd.MM.yyyy HH:mm:ss", CultureInfo.InvariantCulture), DateTimeKind.Unspecified);
                     DateTime pubDateUtc = TimeZoneInfo.ConvertTimeToUtc(dateGerman, germanyTz);
                     release.PublishDate = pubDateUtc;
+
+                    var files = qRow.Find("td:contains(Datei) > strong ~ strong").Text();
+                    release.Files = ParseUtil.CoerceInt(files);
+
+                    if (qRow.Find("img[title=\"OnlyUpload\"]").Length >= 1)
+                        release.DownloadVolumeFactor = 0;
+                    else
+                        release.DownloadVolumeFactor = 1;
+
+                    release.UploadVolumeFactor = 1;
 
                     releases.Add(release);
                 }

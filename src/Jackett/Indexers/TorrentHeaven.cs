@@ -13,7 +13,7 @@ using Jackett.Models.IndexerConfig;
 using System.Collections.Specialized;
 using System.Text;
 using System.Linq;
-using System.Threading;
+using System.Text.RegularExpressions;
 
 namespace Jackett.Indexers
 {
@@ -21,6 +21,7 @@ namespace Jackett.Indexers
     {
         string IndexUrl { get { return SiteLink + "index.php"; } }
         string LoginCompleteUrl { get { return SiteLink + "index.php?strWebValue=account&strWebAction=login_complete&ancestry=verify"; } }
+        static readonly string certificateHash = "6F5CE30D578C2A7AECFB919D0D013976D395055F";
 
         new ConfigurationDataCaptchaLogin configData
         {
@@ -39,6 +40,10 @@ namespace Jackett.Indexers
                    p: ps,
                    configData: new ConfigurationDataCaptchaLogin())
         {
+            Encoding = Encoding.GetEncoding("iso-8859-1");
+            Language = "de-de";
+            Type = "private";
+
             AddCategoryMapping(1,   TorznabCatType.PCGames); // GAMES/PC
             AddCategoryMapping(3,   TorznabCatType.Console); // GAMES/Sonstige
             AddCategoryMapping(59,  TorznabCatType.ConsolePS4); // GAMES/PlayStation
@@ -87,6 +92,14 @@ namespace Jackett.Indexers
             AddCategoryMapping(71,  TorznabCatType.PCMac); // APPLICATIONS/Mac
         }
 
+        public override void LoadValuesFromJson(JToken jsonConfig, bool useProtectionService = false)
+        {
+            base.LoadValuesFromJson(jsonConfig, useProtectionService);
+
+            // add self signed cert to trusted certs
+            webclient.AddTrustedCertificate(new Uri(SiteLink).Host, certificateHash);
+        }
+
         public override async Task<ConfigurationData> GetConfigurationForSetup()
         {
             var loginPage = await RequestStringWithCookies(IndexUrl, string.Empty);
@@ -97,13 +110,17 @@ namespace Jackett.Indexers
                 var captchaImage = await RequestBytesWithCookies(CaptchaUrl, loginPage.Cookies);
                 configData.CaptchaImage.Value = captchaImage.Content;
             }
+            else
+            {
+                configData.CaptchaImage.Value = new byte[0];
+            }
             configData.CaptchaCookie.Value = loginPage.Cookies;
             return configData;
         }
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
             
             var pairs = new Dictionary<string, string>
             {
@@ -121,7 +138,7 @@ namespace Jackett.Indexers
             }
 
             var result = await RequestLoginAndFollowRedirect(IndexUrl, pairs, configData.CaptchaCookie.Value, true, null, IndexUrl, true);
-            if (result.Content == null || !result.Content.Contains("login_complete"))
+            if (result.Content == null || (!result.Content.Contains("login_complete") && !result.Content.Contains("index.php?strWebValue=account&strWebAction=logout")))
             {
                 CQ dom = result.Content;
                 var errorMessage = dom["table > tbody > tr > td[valign=top][width=100%]"].Html();
@@ -172,10 +189,10 @@ namespace Jackett.Indexers
                 queryCollection.Add("dirs" + cat, "1");
             }
             searchUrl += "?" + queryCollection.GetQueryString();
-            logger.Error(searchUrl);
-            logger.Error(CookieHeader);
-            var response = await RequestBytesWithCookies(searchUrl);
-            var results = Encoding.GetEncoding("iso-8859-1").GetString(response.Content);
+
+            var response = await RequestStringWithCookies(searchUrl);
+            var results = response.Content;
+            var TitleRegexp = new Regex(@"^return buildTable\('(.*?)',\s+");
             try
             {
                 CQ dom = results;
@@ -189,7 +206,7 @@ namespace Jackett.Indexers
                     var qRow = row.Cq();
 
                     var qDetailsLink = qRow.Find("a[href^=index.php?strWebValue=torrent&strWebAction=details]").First();
-                    release.Title = qDetailsLink.Text();
+                    release.Title = TitleRegexp.Match(qDetailsLink.Attr("onmouseover")).Groups[1].Value;
 
                     var qCatLink = qRow.Find("a[href^=index.php?strWebValue=torrent&strWebAction=search&dir=]").First();
                     var qDLLink = qRow.Find("a[href^=index.php?strWebValue=torrent&strWebAction=download&id=]").First();
@@ -223,6 +240,18 @@ namespace Jackett.Indexers
 
                     DateTime pubDateUtc = TimeZoneInfo.ConvertTimeToUtc(dateGerman, germanyTz);
                     release.PublishDate = pubDateUtc.ToLocalTime();
+
+                    var grabs = qRow.Find("td:nth-child(7)").Text();
+                    release.Grabs = ParseUtil.CoerceInt(grabs);
+
+                    if (qRow.Find("img[src=\"themes/images/freeleech.png\"]").Length >= 1)
+                        release.DownloadVolumeFactor = 0;
+                    else if (qRow.Find("img[src=\"themes/images/DL50.png\"]").Length >= 1)
+                        release.DownloadVolumeFactor = 0.5;
+                    else
+                        release.DownloadVolumeFactor = 1;
+
+                    release.UploadVolumeFactor = 1;
 
                     releases.Add(release);
                 }

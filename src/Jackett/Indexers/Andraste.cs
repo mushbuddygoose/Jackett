@@ -38,6 +38,10 @@ namespace Jackett.Indexers
                    p: ps,
                    configData: new ConfigurationDataBasicLoginWithRSSAndDisplay())
         {
+            Encoding = Encoding.GetEncoding("iso-8859-1");
+            Language = "de-de";
+            Type = "private";
+
             AddCategoryMapping(9,  TorznabCatType.Other); // Anderes
             AddCategoryMapping(23, TorznabCatType.TVAnime); // Animation - Film &; Serie
             AddCategoryMapping(1,  TorznabCatType.PC); // Appz
@@ -72,7 +76,7 @@ namespace Jackett.Indexers
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
 
             var pairs = new Dictionary<string, string>
             {
@@ -121,11 +125,12 @@ namespace Jackett.Indexers
             }
             searchUrl += "?" + queryCollection.GetQueryString();
 
-            var response = await RequestBytesWithCookies(searchUrl);
-            var results = Encoding.GetEncoding("iso-8859-1").GetString(response.Content);
+            var response = await RequestStringWithCookies(searchUrl);
+            var results = response.Content;
             try
             {
                 CQ dom = results;
+                var globalFreeleech = dom.Find("div > img[alt=\"Only Upload\"][title^=\"ONLY UPLOAD \"]").Any();
                 var rows = dom["table.tableinborder > tbody > tr:has(td.tableb)"];
 
                 foreach (var row in rows)
@@ -135,6 +140,9 @@ namespace Jackett.Indexers
 
                     var qDetailsLink = qRow.Find("a[href^=details.php?id=]").First();
                     release.Title = qDetailsLink.Attr("title");
+
+                    if (!query.MatchQueryStringAND(release.Title))
+                        continue;
 
                     var qCatLink = qRow.Find("a[href^=browse.php?cat=]").First();
                     var qDLLink = qRow.Find("a[href^=download.php?torrent=]").First();
@@ -173,6 +181,21 @@ namespace Jackett.Indexers
 
                     DateTime pubDateUtc = TimeZoneInfo.ConvertTimeToUtc(dateGerman, germanyTz);
                     release.PublishDate = pubDateUtc.ToLocalTime();
+
+                    var files = qRow.Find("a[href*=\"&filelist=1\"] ~ font ~ b").Text();
+                    release.Files = ParseUtil.CoerceInt(files);
+
+                    var grabs = qRow.Find("a[href*=\"&tosnatchers=1\"] ~ font ~ b").Text();
+                    release.Grabs = ParseUtil.CoerceInt(grabs);
+
+                    if (globalFreeleech)
+                        release.DownloadVolumeFactor = 0;
+                    else if (qRow.Find("img[alt=\"OU\"]").Length >= 1)
+                        release.DownloadVolumeFactor = 0;
+                    else
+                        release.DownloadVolumeFactor = 1;
+
+                    release.UploadVolumeFactor = 1;
 
                     releases.Add(release);
                 }

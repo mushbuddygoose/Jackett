@@ -8,6 +8,7 @@ using NLog;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using Jackett.Models.IndexerConfig;
 using System.Collections.Specialized;
@@ -32,7 +33,7 @@ namespace Jackett.Indexers
         public PirateTheNet(IIndexerManagerService i, Logger l, IWebClient w, IProtectionService ps)
             : base(name: "PirateTheNet",
                 description: "A movie tracker",
-                link: "http://piratethe.net/",
+                link: "http://piratethenet.org/",
                 caps: new TorznabCapabilities(),
                 manager: i,
                 client: w,
@@ -40,6 +41,10 @@ namespace Jackett.Indexers
                 p: ps,
                 configData: new ConfigurationDataBasicLoginWithRSSAndDisplay())
         {
+            Encoding = Encoding.GetEncoding("UTF-8");
+            Language = "en-us";
+            Type = "private";
+
             this.configData.DisplayText.Value = "Only the results from the first search result page are shown, adjust your profile settings to show the maximum.";
             this.configData.DisplayText.Name = "Notice";
 
@@ -62,7 +67,7 @@ namespace Jackett.Indexers
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
 
             var result1 = await RequestStringWithCookies(CaptchaUrl);
             var json1 = JObject.Parse(result1.Content);
@@ -197,6 +202,15 @@ namespace Jackett.Indexers
 
                     release.Seeders = ParseUtil.CoerceInt(qSeeders.Text());
                     release.Peers = ParseUtil.CoerceInt(qLeechers.Text()) + release.Seeders;
+
+                    var files = qRow.Find("td:nth-child(4)").Text();
+                    release.Files = ParseUtil.CoerceInt(files);
+
+                    var grabs = qRow.Find("td:nth-child(8)").Text();
+                    release.Grabs = ParseUtil.CoerceInt(grabs);
+
+                    release.DownloadVolumeFactor = 0; // ratioless
+                    release.UploadVolumeFactor = 1;
 
                     releases.Add(release);
                 }

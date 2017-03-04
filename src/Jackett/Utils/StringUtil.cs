@@ -1,6 +1,9 @@
-﻿using System;
+﻿using AngleSharp.Dom;
+using AngleSharp.Html;
+using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Security.Cryptography;
@@ -69,10 +72,26 @@ namespace Jackett.Utils
             return String.Join("\n", fields);
         }
 
-        public static string GetQueryString(this NameValueCollection collection)
+        public static string GetQueryString(this NameValueCollection collection, Encoding encoding = null)
         {
-            return string.Join("&", collection.AllKeys.Select(a => a + "=" + HttpUtility.UrlEncode(collection[a])));
+            if (encoding == null)
+                encoding = Encoding.UTF8;
+            return string.Join("&", collection.AllKeys.Select(a => a + "=" + HttpUtility.UrlEncode(collection[a], encoding)));
         }
+
+        public static string ToHtmlPretty(this IElement element)
+        {
+            if (element == null)
+                return "<NULL>";
+
+            StringBuilder sb = new StringBuilder();
+            StringWriter sw = new StringWriter(sb);
+            var formatter = new PrettyMarkupFormatter();
+            element.ToHtml(sw, formatter);
+            return sb.ToString();
+        }
+
+        
 
         public static string GenerateRandom(int length)
         {

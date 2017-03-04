@@ -18,12 +18,16 @@ namespace Jackett.Models
         public string ApiKey { get; set; }
         public int Limit { get; set; }
         public int Offset { get; set; }
-        public int RageID { get; set; }
+        public int? RageID { get; set; }
         public string ImdbID { get; set; }
 
         public int Season { get; set; }
         public string Episode { get; set; }
         public string SearchTerm { get; set; }
+
+        public bool IsTest { get; set; }
+
+        public string ImdbIDShort { get { return (ImdbID != null ? ImdbID.TrimStart('t') : null); } }
 
         protected string[] QueryStringParts = null;
 
@@ -40,6 +44,13 @@ namespace Jackett.Models
                                                   || char.IsWhiteSpace(c)
                                                   || c == '-'
                                                   || c == '.'
+                                                  || c == '_'
+                                                  || c == '('
+                                                  || c == ')'
+                                                  || c == '@'
+                                                  || c == '\''
+                                                  || c == '['
+                                                  || c == ']'
                                                   ));
                 var safetitle = new string(arr);
                 return safetitle;
@@ -49,6 +60,7 @@ namespace Jackett.Models
         public TorznabQuery()
         {
             Categories = new int[0];
+            IsTest = false;
         }
 
         public string GetQueryString()
@@ -58,13 +70,23 @@ namespace Jackett.Models
 
         // Some trackers don't support AND logic for search terms resulting in unwanted results.
         // Using this method we can AND filter it within jackett.
-        public bool MatchQueryStringAND(string title)
+        // With limit we can limit the amount of characters which should be compared (use it if a tracker doesn't return the full title).
+        public bool MatchQueryStringAND(string title, int? limit = null, string queryStringOverride = null)
         {
             // We cache the regex split results so we have to do it only once for each query.
             if (QueryStringParts == null)
             {
+                var queryString = GetQueryString();
+                if (queryStringOverride != null)
+                    queryString = queryStringOverride;
+                if (limit != null && limit > 0)
+                {
+                    if (limit > queryString.Length)
+                        limit = queryString.Length;
+                    queryString = queryString.Substring(0, (int)limit);
+                }
                 Regex SplitRegex = new Regex("[^a-zA-Z0-9]+");
-                QueryStringParts = SplitRegex.Split(GetQueryString());
+                QueryStringParts = SplitRegex.Split(queryString);
             }
 
             // Check if each part of the query string is in the given title.
@@ -113,10 +135,13 @@ namespace Jackett.Models
 
             if (query["cat"] != null)
             {
-                q.Categories = query["cat"].Split(',').Select(s => int.Parse(s)).ToArray();
+                q.Categories = query["cat"].Split(',').Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => int.Parse(s)).ToArray();
             }else
             {
-                q.Categories = new int[0];
+                if (q.QueryType == "movie" && string.IsNullOrWhiteSpace(query["imdbid"]))
+                    q.Categories = new int[] { TorznabCatType.Movies.ID };
+                else
+                    q.Categories = new int[0];
             }
 
             if (query["extended"] != null)
@@ -132,6 +157,8 @@ namespace Jackett.Models
             {
                 q.Offset = ParseUtil.CoerceInt(query["offset"]);
             }
+
+            q.ImdbID = query["imdbid"];
 
             int rageId;
             if (int.TryParse(query["rid"], out rageId))

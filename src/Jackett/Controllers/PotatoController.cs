@@ -83,7 +83,9 @@ namespace Jackett.Controllers
             if (string.IsNullOrWhiteSpace(request.search))
             {
                 // We are searching by IMDB id so look up the name
-                var response = await webClient.GetString(new Utils.Clients.WebRequest("http://www.omdbapi.com/?type=movie&i=" + request.imdbid));
+                var omdbapiRequest = new Utils.Clients.WebRequest("http://www.omdbapi.com/?type=movie&i=" + request.imdbid);
+                omdbapiRequest.Encoding = Encoding.UTF8;
+                var response = await webClient.GetString(omdbapiRequest);
                 if (response.Status == HttpStatusCode.OK)
                 {
                     JObject result = JObject.Parse(response.Content);
@@ -131,20 +133,22 @@ namespace Jackett.Controllers
                 release.Link = serverService.ConvertToProxyLink(release.Link, serverUrl, indexerID, "dl", release.Title + ".torrent");
 
                 // Only accept torrent links, magnet is not supported
-                if (release.Link != null)
+                // This seems to be no longer the case, allowing magnet URIs for now
+                if (release.Link != null || release.MagnetUri != null)
                 {
                     potatoResponse.results.Add(new TorrentPotatoResponseItem()
                     {
                         release_name = release.Title + "[" + indexer.DisplayName + "]", // Suffix the indexer so we can see which tracker we are using in CPS as it just says torrentpotato >.>
                         torrent_id = release.Guid.ToString(),
                         details_url = release.Comments.ToString(),
-                        download_url = release.Link.ToString(),
+                        download_url = (release.Link != null ? release.Link.ToString() : release.MagnetUri.ToString()),
                         imdb_id = release.Imdb.HasValue ? "tt" + release.Imdb : null,
-                        freeleech = false,
+                        freeleech = (release.DownloadVolumeFactor == 0 ? true : false),
                         type = "movie",
                         size = (long)release.Size / (1024 * 1024), // This is in MB
                         leechers = (int)release.Peers - (int)release.Seeders,
-                        seeders = (int)release.Seeders
+                        seeders = (int)release.Seeders,
+                        publish_date = r.PublishDate == DateTime.MinValue ? null : release.PublishDate.ToUniversalTime().ToString("s")
                     });
                 }
             }

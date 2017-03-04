@@ -25,6 +25,7 @@ namespace Jackett.Services
         T GetConfig<T>();
         void SaveConfig<T>(T config);
         string ApplicationFolder();
+        List<string> GetCardigannDefinitionsFolders();
         void CreateOrMigrateSettings();
         void PerformMigration();
     }
@@ -58,7 +59,7 @@ namespace Jackett.Services
                     }
                 }
 
-                logger.Debug("App config/log directory: " + GetAppDataFolder());
+                logger.Info("App config/log directory: " + GetAppDataFolder());
             }
             catch (Exception ex)
             {
@@ -195,6 +196,36 @@ namespace Jackett.Services
             }
 #endif
             return dir;
+        }
+
+        public List<string> GetCardigannDefinitionsFolders()
+        {
+            List<string> dirs = new List<string>();
+
+            if (System.Environment.OSVersion.Platform == PlatformID.Unix)
+            {
+                dirs.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "cardigann/definitions/"));
+                dirs.Add("/etc/xdg/cardigan/definitions/");
+            }
+            else
+            {
+                dirs.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "cardigann\\definitions\\"));
+                dirs.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "cardigann\\definitions\\"));
+            }
+
+            // If we are debugging we can use the non copied definitions.
+            string dir = Path.Combine(ApplicationFolder(), "Definitions"); ;
+
+#if DEBUG
+            // When we are running in debug use the source files
+            var sourcePath = Path.GetFullPath(Path.Combine(ApplicationFolder(), "..\\..\\..\\Jackett\\Definitions"));
+            if (Directory.Exists(sourcePath))
+            {
+                dir = sourcePath;
+            }
+#endif
+            dirs.Add(dir);
+            return dirs;
         }
 
         public string GetVersion()

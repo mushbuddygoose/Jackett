@@ -161,6 +161,7 @@ namespace Jackett.Controllers
                 jsonReply["config"] = config.ToJson(null);
                 jsonReply["caps"] = indexer.TorznabCaps.CapsToJson();
                 jsonReply["name"] = indexer.DisplayName;
+                jsonReply["alternativesitelinks"] = JToken.FromObject(indexer.AlternativeSiteLinks);
                 jsonReply["result"] = "success";
             }
             catch (Exception ex)
@@ -230,8 +231,11 @@ namespace Jackett.Controllers
                     item["id"] = indexer.ID;
                     item["name"] = indexer.DisplayName;
                     item["description"] = indexer.DisplayDescription;
+                    item["type"] = indexer.Type;
                     item["configured"] = indexer.IsConfigured;
                     item["site_link"] = indexer.SiteLink;
+                    item["language"] = indexer.Language;
+                    item["last_error"] = indexer.LastError;
                     item["potatoenabled"] = indexer.TorznabCaps.Categories.Select(c => c.ID).Any(i => PotatoController.MOVIE_CATS.Contains(i));
 
                     var caps = new JObject();
@@ -256,19 +260,27 @@ namespace Jackett.Controllers
         public async Task<IHttpActionResult> Test()
         {
             JToken jsonReply = new JObject();
+            IIndexer indexer = null;
             try
             {
                 var postData = await ReadPostDataJson();
                 string indexerString = (string)postData["indexer"];
+                indexer = indexerService.GetIndexer(indexerString);
                 await indexerService.TestIndexer(indexerString);
-                jsonReply["name"] = indexerService.GetIndexer(indexerString).DisplayName;
+                jsonReply["name"] = indexer.DisplayName;
                 jsonReply["result"] = "success";
+                indexer.LastError = null;
             }
             catch (Exception ex)
             {
+                var msg = ex.Message;
+                if (ex.InnerException != null)
+                    msg += ": " + ex.InnerException.Message;
                 logger.Error(ex, "Exception in test_indexer");
                 jsonReply["result"] = "error";
-                jsonReply["error"] = ex.Message;
+                jsonReply["error"] = msg;
+                if (indexer != null)
+                    indexer.LastError = msg;
             }
             return Json(jsonReply);
         }
@@ -310,6 +322,7 @@ namespace Jackett.Controllers
             try
             {
                 var cfg = new JObject();
+                cfg["notices"] = JToken.FromObject(serverService.notices);
                 cfg["port"] = serverService.Config.Port;
                 cfg["external"] = serverService.Config.AllowExternal;
                 cfg["api_key"] = serverService.Config.APIKey;
@@ -473,13 +486,25 @@ namespace Jackett.Controllers
         public ManualSearchResult Search([FromBody]AdminSearch value)
         {
             var results = new List<TrackerCacheResult>();
-            var query = new TorznabQuery()
+            var stringQuery = new TorznabQuery()
             {
                 SearchTerm = value.Query,
                 Categories = value.Category == 0 ? new int[0] : new int[1] { value.Category }
             };
+            stringQuery.ExpandCatsToSubCats();
 
-            query.ExpandCatsToSubCats();
+            // try to build an IMDB Query
+            var imdbID = ParseUtil.GetFullImdbID(stringQuery.SanitizedSearchTerm);
+            TorznabQuery imdbQuery = null;
+            if (imdbID != null)
+            {
+                imdbQuery = new TorznabQuery()
+                {
+                    ImdbID = imdbID,
+                    Categories = stringQuery.Categories
+                };
+                imdbQuery.ExpandCatsToSubCats();
+            }
 
             var trackers = indexerService.GetAllIndexers().Where(t => t.IsConfigured).ToList();
             if (!string.IsNullOrWhiteSpace(value.Tracker))
@@ -496,6 +521,11 @@ namespace Jackett.Controllers
             {
                 try
                 {
+                    var query = stringQuery;
+                    // use imdb Query for trackers which support it
+                    if (imdbQuery != null && indexer.TorznabCaps.SupportsImdbSearch)
+                        query = imdbQuery;
+
                     var searchResults = indexer.PerformQuery(query).Result;
                     searchResults = indexer.CleanLinks(searchResults);
                     cacheService.CacheRssResults(indexer, searchResults);
@@ -536,7 +566,7 @@ namespace Jackett.Controllers
             if (manualResult.Indexers.Count == 0)
                 manualResult.Indexers = new List<string>() { "None" };
 
-            logger.Info(string.Format("Manual search for \"{0}\" on {1} with {2} results.", query.GetQueryString(), string.Join(", ", manualResult.Indexers), manualResult.Results.Count));
+            logger.Info(string.Format("Manual search for \"{0}\" on {1} with {2} results.", stringQuery.GetQueryString(), string.Join(", ", manualResult.Indexers), manualResult.Results.Count));
             return manualResult;
         }
     }

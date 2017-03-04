@@ -37,6 +37,10 @@ namespace Jackett.Indexers
                    p: ps,
                    configData: new ConfigurationDataBasicLoginWithRSSAndDisplay())
         {
+            Encoding = Encoding.GetEncoding("UTF-8");
+            Language = "de-de";
+            Type = "private";
+
             AddCategoryMapping(20, TorznabCatType.PC); // Apps - PC
             AddCategoryMapping(24, TorznabCatType.AudioAudiobook); // Audio - Hoerbuch/-spiel
             AddCategoryMapping(22, TorznabCatType.Audio); // Audio - Musik
@@ -59,7 +63,7 @@ namespace Jackett.Indexers
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
 
             var pairs = new Dictionary<string, string>
             {
@@ -108,8 +112,15 @@ namespace Jackett.Indexers
             }
             searchUrl += "?" + queryCollection.GetQueryString();
 
-            var response = await RequestBytesWithCookies(searchUrl);
-            var results = Encoding.UTF8.GetString(response.Content);
+            var response = await RequestStringWithCookies(searchUrl);
+            if (response.IsRedirect)
+            {
+                // re-login
+                await ApplyConfiguration(null);
+                response = await RequestStringWithCookies(searchUrl);
+            }
+
+            var results = response.Content;
             try
             {
                 CQ dom = results;
@@ -125,6 +136,9 @@ namespace Jackett.Indexers
 
                     var qDetailsLink = qRow.Find("a[href^=torrents-details.php?id=]").First();
                     release.Title = qDetailsLink.Attr("title");
+
+                    if (!query.MatchQueryStringAND(release.Title))
+                        continue;
 
                     var qCatLink = qRow.Find("a[href^=torrents.php?cat=]").First();
                     var qDLLink = qRow.Find("a[href^=download.php]").First();
@@ -151,6 +165,16 @@ namespace Jackett.Indexers
 
                     DateTime pubDateUtc = TimeZoneInfo.ConvertTimeToUtc(dateGerman, germanyTz);
                     release.PublishDate = pubDateUtc.ToLocalTime();
+
+                    var grabs = qRow.Find("td:nth-child(6)").Text();
+                    release.Grabs = ParseUtil.CoerceInt(grabs);
+
+                    if (qRow.Find("img[src=\"images/free.gif\"]").Length >= 1)
+                        release.DownloadVolumeFactor = 0;
+                    else
+                        release.DownloadVolumeFactor = 1;
+
+                    release.UploadVolumeFactor = 1;
 
                     releases.Add(release);
                 }

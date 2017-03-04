@@ -22,7 +22,7 @@ namespace Jackett.Indexers
 {
     public class BroadcastTheNet : BaseIndexer, IIndexer
     {
-        string APIBASE = "http://api.btnapps.net/";
+        string APIBASE = "https://api.broadcasthe.net";
 
         new ConfigurationDataAPIKey configData
         {
@@ -41,11 +41,14 @@ namespace Jackett.Indexers
                 p: ps,
                 configData: new ConfigurationDataAPIKey())
         {
+            Encoding = Encoding.UTF8;
+            Language = "en-us";
+            Type = "private";
         }
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
 
             IsConfigured = false;
             try
@@ -103,7 +106,7 @@ namespace Jackett.Indexers
                         var item = new ReleaseInfo();
                         if (!string.IsNullOrEmpty(btnResult.SeriesBanner))
                             item.BannerUrl = new Uri(btnResult.SeriesBanner);
-                        item.Category = TorznabCatType.TV.ID;
+                        item.Category = new List<int> { TorznabCatType.TV.ID };
                         item.Comments = new Uri($"https://broadcasthe.net/torrents.php?id={btnResult.GroupID}&torrentid={btnResult.TorrentID}");
                         item.Description = btnResult.ReleaseName;
                         item.Guid = new Uri(btnResult.DownloadURL);

@@ -19,7 +19,7 @@ namespace Jackett.Indexers
     public class Demonoid : BaseIndexer, IIndexer
     {
         private string LoginUrl { get { return SiteLink + "account_handler.php"; } }
-        private string SearchUrl { get { return SiteLink + "files/?category={0}&subcategory=All&quality=All&seeded=0&to=1&query={1}"; } }
+        private string SearchUrl { get { return SiteLink + "files/?category={0}&subcategory=All&quality=All&seeded=2&to=1&query={1}&external=2"; } }
 
         new ConfigurationDataBasicLogin configData
         {
@@ -38,15 +38,27 @@ namespace Jackett.Indexers
                 p: ps,
                 configData: new ConfigurationDataBasicLogin())
         {
-            AddCategoryMapping(3, TorznabCatType.TV);
-            AddCategoryMapping(3, TorznabCatType.TVSD);
-            AddCategoryMapping(3, TorznabCatType.TVHD);
-            AddCategoryMapping(1, TorznabCatType.Movies);
+            Encoding = Encoding.GetEncoding("UTF-8");
+            Language = "en-us";
+            Type = "private";
+
+            AddCategoryMapping(5, TorznabCatType.PC0day, "Applications");
+            AddCategoryMapping(17, TorznabCatType.AudioAudiobook, "Audio Books");
+            AddCategoryMapping(11, TorznabCatType.Books, "Books");
+            AddCategoryMapping(10, TorznabCatType.BooksComics, "Comics");
+            AddCategoryMapping(4, TorznabCatType.PCGames, "Games");
+            AddCategoryMapping(9, TorznabCatType.TVAnime, "Japanese Anime");
+            AddCategoryMapping(6, TorznabCatType.Other, "Miscellaneous");
+            AddCategoryMapping(1, TorznabCatType.Movies, "Movies");
+            AddCategoryMapping(2, TorznabCatType.Audio, "Music");
+            AddCategoryMapping(13, TorznabCatType.AudioVideo, "Music Videos");
+            AddCategoryMapping(8, TorznabCatType.Other, "Pictures");
+            AddCategoryMapping(3, TorznabCatType.TV, "TV");
         }
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
             var pairs = new Dictionary<string, string> {
                 { "nickname", configData.Username.Value },
                 { "password", configData.Password.Value },
@@ -55,8 +67,8 @@ namespace Jackett.Indexers
                 { "Submit", "Submit" }
             };
 
-            var result = await RequestLoginAndFollowRedirect(LoginUrl, pairs, null, true, null, SiteLink);
-            await ConfigureIfOK(result.Cookies, result.Content != null && result.Content.Contains("user_control_panel.php"), () =>
+            var result = await RequestLoginAndFollowRedirect(LoginUrl, pairs, null, true, SiteLink, SiteLink);
+            await ConfigureIfOK(result.Cookies, result.Content != null && result.Cookies.Contains("uid="), () =>
             {
                 CQ dom = result.Content;
                 string errorMessage = dom["form[id='bb_code_form']"].Parent().Find("font[class='red']").Text();
@@ -111,9 +123,23 @@ namespace Jackett.Indexers
 
                     release.PublishDate = lastDateTime;
 
+                    var catUrl = rowA.ChildElements.ElementAt(0).FirstElementChild.GetAttribute("href");
+                    var catId = HttpUtility.ParseQueryString(catUrl).Get("category");
+                    release.Category = MapTrackerCatToNewznab(catId);
+
                     var qLink = rowA.ChildElements.ElementAt(1).FirstElementChild.Cq();
                     release.Title = qLink.Text().Trim();
-                    release.Description = release.Title;
+                    release.Description = rowB.ChildElements.ElementAt(0).Cq().Text();
+
+                    if (release.Category != null && release.Category.Contains(TorznabCatType.Audio.ID))
+                    {
+                        if (release.Description.Contains("Lossless"))
+                            release.Category = new List<int> { TorznabCatType.AudioLossless.ID };
+                        else if (release.Description.Contains("MP3"))
+                            release.Category = new List<int> { TorznabCatType.AudioMP3.ID };
+                        else
+                            release.Category = new List<int> { TorznabCatType.AudioOther.ID };
+                    }
 
                     release.Comments = new Uri(SiteLink + qLink.Attr("href"));
                     release.Guid = release.Comments;
@@ -126,6 +152,12 @@ namespace Jackett.Indexers
 
                     release.Seeders = ParseUtil.CoerceInt(rowB.ChildElements.ElementAt(6).Cq().Text());
                     release.Peers = ParseUtil.CoerceInt(rowB.ChildElements.ElementAt(6).Cq().Text()) + release.Seeders;
+
+                    var grabs = rowB.Cq().Find("td:nth-child(6)").Text();
+                    release.Grabs = ParseUtil.CoerceInt(grabs);
+
+                    release.DownloadVolumeFactor = 0; // ratioless
+                    release.UploadVolumeFactor = 1;
 
                     releases.Add(release);
                 }

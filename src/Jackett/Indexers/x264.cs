@@ -8,6 +8,7 @@ using NLog;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using Jackett.Models.IndexerConfig;
 using System.Collections.Specialized;
@@ -37,6 +38,12 @@ namespace Jackett.Indexers
                 p: ps,
                 configData: new ConfigurationDataRecaptchaLogin())
         {
+            Encoding = Encoding.GetEncoding("iso-8859-1");
+            Language = "en-us";
+            Type = "private";
+
+            TorznabCaps.SupportsImdbSearch = true;
+
             AddCategoryMapping(20, TorznabCatType.Movies); // Movies&TV/Sources
             AddCategoryMapping(53, TorznabCatType.MoviesHD); // Movies/1080p
             AddCategoryMapping(30, TorznabCatType.MoviesHD); // Movies/576p
@@ -52,24 +59,22 @@ namespace Jackett.Indexers
         {
             var loginPage = await RequestStringWithCookies(LoginUrl, string.Empty);
             CQ dom = loginPage.Content;
-            CQ recaptchaScript = dom.Find("script").First();
 
-            string recaptchaSiteKey = recaptchaScript.Attr("src").Split('=')[1];
-            var result = new ConfigurationDataRecaptchaLogin();
+            var result = this.configData;
+            var captcha = dom.Find(".g-recaptcha");
             result.CookieHeader.Value = loginPage.Cookies;
-            result.Captcha.SiteKey = recaptchaSiteKey;
-            result.Captcha.Version = "1";
+            result.Captcha.SiteKey = captcha.Attr("data-sitekey");
+            result.Captcha.Version = "2";
             return result;
         }
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
             var pairs = new Dictionary<string, string> {
                 { "username", configData.Username.Value },
                 { "password", configData.Password.Value },
-                { "recaptcha_challenge_field", configData.Captcha.Challenge },
-                { "recaptcha_response_field", configData.Captcha.Value },
+                { "g-recaptcha-response", configData.Captcha.Value }
             };
 
             if (!string.IsNullOrWhiteSpace(configData.Captcha.Cookie))
@@ -115,7 +120,11 @@ namespace Jackett.Indexers
             queryCollection.Add("xtype", "0");
             queryCollection.Add("stype", "0");
 
-            if (!string.IsNullOrWhiteSpace(searchString))
+            if (query.ImdbID != null)
+            {
+                queryCollection.Add("search", query.ImdbID);
+            }
+            else if (!string.IsNullOrWhiteSpace(searchString))
             {
                 queryCollection.Add("search", searchString);
             }
@@ -131,6 +140,11 @@ namespace Jackett.Indexers
             try
             {
                 CQ dom = results.Content;
+
+                var sideWideFreeLeech = false;
+                if (dom.Find("td > b > font[color=\"white\"]:contains(Free Leech)").Length >= 1)
+                    sideWideFreeLeech = true;
+
                 var rows = dom["table > tbody > tr[height=36]"];
                 foreach (var row in rows)
                 {
@@ -165,6 +179,18 @@ namespace Jackett.Indexers
 
                     release.Seeders = ParseUtil.CoerceInt(qSeeders.Text());
                     release.Peers = ParseUtil.CoerceInt(qLeechers.Text()) + release.Seeders;
+
+                    var files = qRow.Find("td:nth-child(3)").Text();
+                    release.Files = ParseUtil.CoerceInt(files);
+
+                    var grabs = qRow.Find("td:nth-child(8)").Get(0).FirstChild.ToString();
+                    release.Grabs = ParseUtil.CoerceInt(grabs);
+
+                    if (sideWideFreeLeech || qRow.Find("font[color=\"red\"]:contains(FREE)").Length >= 1)
+                        release.DownloadVolumeFactor = 0;
+                    else
+                        release.DownloadVolumeFactor = 1;
+                    release.UploadVolumeFactor = 1;
 
                     releases.Add(release);
                 }

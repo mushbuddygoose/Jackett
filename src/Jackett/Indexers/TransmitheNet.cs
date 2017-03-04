@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Threading.Tasks;
 using System.Web;
+using System.Text;
 using Jackett.Models.IndexerConfig;
 using AngleSharp.Parser.Html;
 using System.Text.RegularExpressions;
@@ -37,11 +38,14 @@ namespace Jackett.Indexers
                 p: ps,
                 configData: new ConfigurationDataBasicLogin("For best results, change the 'Torrents per page' setting to 100 in your profile on the TTN webpage."))
         {
+            Encoding = Encoding.GetEncoding("UTF-8");
+            Language = "en-us";
+            Type = "private";
         }
 
         public async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
             await DoLogin();
             return IndexerConfigurationStatus.RequiresTesting;
         }
@@ -63,7 +67,9 @@ namespace Jackett.Indexers
                 var parser = new HtmlParser();
                 var document = parser.Parse(response.Content);
                 var messageEl = document.QuerySelector("form > span[class='warning']");
-                var errorMessage = messageEl.TextContent.Trim();
+                var errorMessage = response.Content;
+                if (messageEl != null)
+                    errorMessage = messageEl.TextContent.Trim();
                 throw new ExceptionWithConfigData(errorMessage, configData);
             });
         }
@@ -97,8 +103,13 @@ namespace Jackett.Indexers
 
             try
             {
+                var globalFreeleech = false;
                 var parser = new HtmlParser();
                 var document = parser.Parse(htmlResponse);
+
+                if (document.QuerySelector("div.nicebar > span:contains(\"Personal Freeleech\")") != null)
+                    globalFreeleech = true;
+
                 var rows = document.QuerySelectorAll(".torrent_table > tbody > tr[class^='torrent row']");
 
                 foreach (var row in rows)
@@ -124,7 +135,7 @@ namespace Jackett.Indexers
                     release.Guid = new Uri(SiteLink + row.QuerySelector("a[data-src]").GetAttribute("href"));
                     release.Comments = release.Guid;
                     release.Link = new Uri(SiteLink + row.QuerySelector("a[href*='action=download']").GetAttribute("href"));
-                    release.Category = TvCategoryParser.ParseTvShowQuality(release.Title);
+                    release.Category = new List<int> { TvCategoryParser.ParseTvShowQuality(release.Title) };
 
                     var timeAnchor = row.QuerySelector("span[class='time']");
                     release.PublishDate = DateTime.ParseExact(timeAnchor.GetAttribute("title"), "MMM dd yyyy, HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal);
@@ -133,6 +144,19 @@ namespace Jackett.Indexers
                     release.Size = ReleaseInfo.GetBytes(timeAnchor.ParentElement.PreviousElementSibling.TextContent);
                     release.MinimumRatio = 1;
                     release.MinimumSeedTime = 172800;
+
+                    release.Files = ParseUtil.CoerceLong(row.QuerySelector("td > div:contains(\"Files:\")").TextContent.Split(':')[1].Trim());
+                    release.Grabs = ParseUtil.CoerceLong(row.QuerySelector("td:nth-last-child(3)").TextContent);
+
+                    if (globalFreeleech)
+                        release.DownloadVolumeFactor = 0;
+                    else if (row.QuerySelector("img[alt=\"Freeleech\"]") != null)
+                        release.DownloadVolumeFactor = 0;
+                    else
+                        release.DownloadVolumeFactor = 1;
+
+                    release.UploadVolumeFactor = 1;
+
 
                     releases.Add(release);
                 }
